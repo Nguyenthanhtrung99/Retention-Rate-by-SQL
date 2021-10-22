@@ -1,0 +1,59 @@
+with query_sql as (
+    select
+        query_id,
+        user_id,
+        started_at,
+        question_type,
+        context,
+        query_length,
+        raw_query
+    from dwh_metabase.query
+    where
+        question_type = 'SQL query'
+        and context = 'ad-hoc'
+        and user_id not in (1, 5) --admin accounts
+),
+
+user_first_week as (
+    select user_id, date_trunc('week', min(started_at)) as first_week
+    from query_sql
+    group by user_id
+),
+
+new_users_by_week as (
+    select first_week, count (user_id) as new_users
+    from user_first_week
+    group by first_week
+),
+
+user_retention_week as (
+    select user_id,
+        date_trunc('week', started_at) as retention_week
+    from query_sql
+    group by user_id,
+        date_trunc('week', started_at)
+    order by 1, 2
+),
+
+pre_retention_rate as (
+    select user_retention_week.user_id, retention_week, first_week
+    from user_retention_week
+    left join user_first_week on user_retention_week.user_id = user_first_week.user_id
+    order by 1
+),
+
+retained_users_by_week as (
+    select first_week,
+        retention_week,
+        count(user_id) as retained_users
+    from pre_retention_rate
+    group by first_week, retention_week
+    order by 1, 2
+)
+
+select retained_users_by_week.first_week, retention_week, new_users, retained_users, 
+    retained_users::numeric / new_users as retention_rate,
+    concat('W',(retention_week::date - retained_users_by_week.first_week::date)/7) as retention_week_no
+from retained_users_by_week
+left join new_users_by_week on retained_users_by_week.first_week = new_users_by_week.first_week
+order by 1, 2
